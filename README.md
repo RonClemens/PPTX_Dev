@@ -213,6 +213,128 @@ cd backend
 .venv/bin/python -m pytest -q
 ```
 
+## Local container deployment (single-user desktop, CUI-capable)
+
+For running on your own machine -- including one approved for CUI -- so
+documents never leave it. The only outbound connection the app makes is the
+one you configure for AI features (the Anthropic API or your own
+Anthropic-compatible gateway); with no key set it makes none, and every
+non-AI feature works fully offline. There is no telemetry.
+
+**Requirements:** Docker Desktop / Docker Engine with Compose v2, or Podman
+with `podman compose`. No Python or Node needed on the host.
+
+```bash
+cp .env.example .env          # edit if you want (all settings are optional)
+docker compose up -d --build
+# open http://localhost:8000
+```
+
+Upload `samples/sample.pptx` to try it. Stop with `docker compose down` (your
+data is kept); `docker compose logs -f` to watch; `docker compose ps` shows
+the health status.
+
+### What the container does for you
+
+- **Loopback only.** The port is published on `127.0.0.1`, so only this
+  computer can reach it. **The app has no login** -- anything that can reach
+  the port can read and edit every uploaded deck. Only change
+  `PPTX_DEV_BIND` (in `.env`) to a LAN address if an authenticating reverse
+  proxy sits in front.
+- **Least privilege.** Runs as an unprivileged user (uid 10001) with a
+  read-only root filesystem, all Linux capabilities dropped,
+  `no-new-privileges`, and a PID limit. The only writable places are the
+  data volume and `/tmp`.
+- **No CORS.** The UI and API are the same origin, so cross-origin access is
+  disabled (`PPTX_DEV_CORS_ORIGINS=""`); other web pages open in your browser
+  cannot call the API.
+- **Persistent data** in a named volume mounted at `/data`: uploaded decks
+  (original + working copy), comments/decisions, AI chat transcripts, and the
+  edit/AI audit logs. It survives `down`, rebuilds, and image upgrades. To
+  start completely fresh: `docker compose down -v` (**this deletes all data**).
+- **Healthcheck** against `/api/health` (`docker compose ps` shows
+  `healthy`). The response also reports `dataDirIsMountPoint: true`, confirming
+  data really is on the volume.
+- **One server process, on purpose.** The API key/base URL/model entered in
+  the Settings modal live in that process's memory.
+
+### Configuring AI
+
+Two ways; pick one:
+
+1. **Environment (recommended for CUI):** put `ANTHROPIC_API_KEY=...` in
+   `.env` (git-ignored) and restart. The key stays on the host and in the
+   container's environment and never reaches the browser.
+2. **In the app:** leave it blank and use the gear (Settings) modal. The key
+   is held in server memory *and* cached in that browser's local storage so
+   you don't retype it after a restart -- fine on your own account, not on a
+   shared profile.
+
+For a Bedrock-style gateway also set `ANTHROPIC_BASE_URL` (host only, no
+`/v1`) and `PPTX_DEV_AI_MODEL` to the gateway's model id. The Settings modal's
+**Test Connection** button confirms it works before you rely on it.
+
+### Backup and restore
+
+```bash
+# backup the data volume to ./pptx-data.tgz
+docker run --rm -v pptx-review-ai_pptx-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/pptx-data.tgz -C /data .
+# restore into a (new, empty) volume
+docker run --rm -v pptx-review-ai_pptx-data:/data -v "$PWD":/backup alpine \
+  tar xzf /backup/pptx-data.tgz -C /data
+```
+Keep backups to the same standard as the documents themselves. (On Windows
+PowerShell use `${PWD}` instead of `"$PWD"`.)
+
+### Using a folder instead of a named volume
+
+Edit `docker-compose.yml`: replace `pptx-data:/data` with `./data:/data`, and
+on Linux make it writable for the container's user first:
+`mkdir data && sudo chown 10001:10001 data`. Prefer the named volume on
+Windows/macOS: the store relies on atomic renames and file locking, which
+Docker Desktop's bind-mount file sharing may not provide reliably.
+
+### Building without internet access to the build host / moving the image
+
+Build once on a connected machine, then carry the image over:
+```bash
+docker compose build
+docker save pptx-review-ai:local | gzip > pptx-review-ai.tar.gz
+# on the target machine (with docker-compose.yml and .env alongside):
+gunzip -c pptx-review-ai.tar.gz | docker load
+docker compose up -d --no-build
+```
+The image contains no secrets (keys come from `.env` at run time).
+
+### Networks that inspect TLS
+
+If `docker compose build` fails with `CERTIFICATE_VERIFY_FAILED` (a corporate
+proxy re-signing HTTPS), point the build at your organization's CA bundle in
+PEM format via `PPTX_DEV_CA_BUNDLE` in `.env` (or the shell). It is passed as
+a BuildKit secret for `npm` and `pip` only -- it is not stored in the image.
+Registry/proxy settings for Docker itself (pulling `node` and `python`) are
+configured in Docker, not here.
+
+### Updating
+
+```bash
+git pull
+docker compose up -d --build     # data volume is untouched
+```
+Pin base images by digest in the `Dockerfile` if your change-control process
+requires reproducible rebuilds.
+
+### Verified behavior
+
+Built and run with Docker 29 / Compose v5: container reports healthy, runs as
+uid 10001, root filesystem is read-only, the port binds to 127.0.0.1 only, no
+CORS headers are sent, an uploaded deck survives `docker compose down` /
+`up`, and a root-owned data directory (the Render disk case) is repaired and
+served as the unprivileged user. Not covered: Podman, Windows/macOS hosts, and
+any specific accreditation requirements -- review the settings above against
+your own.
+
 ## Deployment (Render — demo/staging only, non-CUI data)
 
 The repo root `Dockerfile` builds the whole app as one container: a Node
@@ -275,7 +397,7 @@ this URL can then use it without entering anything.
 To build and run it locally the same way Render will:
 ```bash
 docker build -t pptx-dev .
-docker run -p 8000:8000 -v pptx-data:/data pptx-dev
+docker run -p 8000:8000 -v pptx-data:/data pptx-dev   # see the previous section for the hardened docker compose setup
 # open http://localhost:8000, then set your API key via the Settings modal
 # -- or pass -e ANTHROPIC_API_KEY=sk-... to bake one in instead
 ```

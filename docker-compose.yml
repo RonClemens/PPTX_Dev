@@ -1,0 +1,62 @@
+# Local, single-user deployment (e.g. a CUI-capable desktop).
+#
+#   cp .env.example .env      # then edit as needed
+#   docker compose up -d --build
+#   open http://localhost:8000
+#
+# Works with Docker Desktop / Docker Engine and with `podman compose`.
+name: pptx-review-ai   # fixed project name -> predictable volume name "pptx-review-ai_pptx-data"
+
+services:
+  pptx-review:
+    build:
+      context: .
+      # Only needed behind a TLS-inspecting proxy; see README. Empty = unused.
+      secrets:
+        - ca
+    image: pptx-review-ai:local
+    container_name: pptx-review-ai
+    restart: unless-stopped
+
+    # Loopback only by default: the app has no login, so anything that can
+    # reach this port can read/edit every uploaded deck. Set PPTX_DEV_BIND to
+    # a LAN address ONLY behind something that adds authentication.
+    ports:
+      - "${PPTX_DEV_BIND:-127.0.0.1}:${PPTX_DEV_PORT:-8000}:8000"
+
+    environment:
+      # Leave ANTHROPIC_API_KEY empty to enter it in the in-app Settings (gear)
+      # modal instead. See README "Local container deployment".
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Only for an Anthropic-API-compatible gateway (e.g. in front of Bedrock),
+      # given WITHOUT a trailing /v1.
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+      PPTX_DEV_AI_MODEL: "${PPTX_DEV_AI_MODEL:-claude-sonnet-5}"
+      # The UI is served by the same process, so cross-origin access is never
+      # needed here; disabling CORS means other web pages in your browser
+      # can't talk to the API.
+      PPTX_DEV_CORS_ORIGINS: ""
+
+    # All persistent state: uploaded decks, comments, decisions, AI chats,
+    # audit logs. A named volume works the same on Linux, macOS and Windows;
+    # see the README for using a bind-mounted folder instead.
+    volumes:
+      - pptx-data:/data
+
+    # Least privilege.
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+
+secrets:
+  ca:
+    file: ${PPTX_DEV_CA_BUNDLE:-/dev/null}
+
+volumes:
+  pptx-data:

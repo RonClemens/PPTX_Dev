@@ -53,3 +53,39 @@ def test_normalize_base_url_strips_trailing_v1_and_slash():
     assert normalize_base_url("") == ""
     # A path that merely ends with "v1" as part of a longer segment isn't touched.
     assert normalize_base_url("https://gw.example.mil/apiv1") == "https://gw.example.mil/apiv1"
+
+
+def _reload_app(monkeypatch, tmp_path, cors):
+    import importlib
+    import sys
+
+    monkeypatch.setenv("PPTX_DEV_DATA_DIR", str(tmp_path))
+    if cors is None:
+        monkeypatch.delenv("PPTX_DEV_CORS_ORIGINS", raising=False)
+    else:
+        monkeypatch.setenv("PPTX_DEV_CORS_ORIGINS", cors)
+    for mod in list(sys.modules):
+        if mod.startswith("app"):
+            del sys.modules[mod]
+    from fastapi.testclient import TestClient
+
+    return TestClient(importlib.import_module("app.main").app)
+
+
+def test_cors_defaults_to_open_and_can_be_disabled(monkeypatch, tmp_path):
+    origin = {"Origin": "https://other.example"}
+    assert _reload_app(monkeypatch, tmp_path, None).get("/api/health", headers=origin).headers.get(
+        "access-control-allow-origin"
+    ) == "*"
+    # The local container deployment sets it to "" -> no CORS headers at all.
+    assert "access-control-allow-origin" not in _reload_app(monkeypatch, tmp_path, "").get(
+        "/api/health", headers=origin
+    ).headers
+
+
+def test_cors_can_be_restricted_to_listed_origins(monkeypatch, tmp_path):
+    client = _reload_app(monkeypatch, tmp_path, "https://a.example, https://b.example")
+    ok = client.get("/api/health", headers={"Origin": "https://b.example"})
+    assert ok.headers["access-control-allow-origin"] == "https://b.example"
+    no = client.get("/api/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in no.headers

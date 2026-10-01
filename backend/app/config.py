@@ -6,6 +6,12 @@ DATA_DIR = Path(os.environ.get("PPTX_DEV_DATA_DIR", BACKEND_DIR.parent / "data")
 DOCUMENTS_DIR = DATA_DIR / "documents"
 INDEX_PATH = DATA_DIR / "index.json"
 
+# Browser origins allowed to call the API cross-origin (comma-separated, or
+# "*"). The built UI is served by this same process, so it never needs CORS;
+# set this to an empty string to disable CORS entirely (the local container
+# deployment does). Default "*" keeps `npm run dev` + other tooling working.
+CORS_ORIGINS = [o.strip() for o in os.environ.get("PPTX_DEV_CORS_ORIGINS", "*").split(",") if o.strip()]
+
 DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 def normalize_base_url(url: str) -> str:
