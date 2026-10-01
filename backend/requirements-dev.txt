@@ -1,0 +1,4 @@
+# Dev-only extras: building the sample deck and validating exports with python-pptx.
+-r requirements.txt
+python-pptx==1.0.2
+pillow>=10

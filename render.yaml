@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: pptx-review-ai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter # persistent disks require a paid plan; the free plan's
+                  # filesystem is ephemeral and would lose all documents on
+                  # every deploy/restart
+    envVars:
+      # No ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL here on purpose: this
+      # deployment never bakes in an org-wide AI credential. Each browser
+      # session sets its own key (and, for a Bedrock gateway, base URL) at
+      # runtime via the in-app Settings modal (PUT /api/settings/anthropic-key)
+      # -- it's held in that server process's memory only and is never
+      # written back to this file or the Render dashboard.
+      - key: PPTX_DEV_AI_MODEL
+        value: claude-sonnet-5
+      - key: PPTX_DEV_DATA_DIR
+        value: /data
+    disk:
+      name: pptx-data
+      mountPath: /data
+      sizeGB: 1
+    healthCheckPath: /api/health

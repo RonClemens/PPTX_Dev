@@ -1,0 +1,17 @@
+**/__pycache__/
+**/*.pyc
+backend/.venv/
+backend/.pytest_cache/
+backend/tests/
+
+frontend/node_modules/
+frontend/dist/
+
+data/
+!data/.gitkeep
+
+.git/
+.gitignore
+.dockerignore
+README.md
+*.md
