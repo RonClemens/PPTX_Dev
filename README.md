@@ -194,7 +194,7 @@ Backend:
 ```bash
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-...   # or set it later in the in-app Settings modal
+# optional: export ANTHROPIC_API_KEY=sk-...   (or just enter it in the in-app Settings modal)
 .venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
@@ -240,13 +240,29 @@ Open **⚙ Settings** and fill in, top to bottom:
    exact request URL, HTTP status, the gateway's own error text, and the most
    likely cause. Fix the setting it points at and test again.
 
-Each save takes effect immediately -- no restart. Settings live in the server
-process's memory and are cached in this browser (not encrypted) and re-applied
-on every page load, so a Render restart or spin-down doesn't lose them.
+### Where your key and URL are stored
 
-**Environment variables** do the same without touching the browser (preferred
-when others can reach the app, since the token then never enters a browser): on
-Render add them under *Environment*; in the container put them in `.env`.
+**Only in the browser on the device you typed them into.** The server never
+stores your API key/token, base URL, authentication mode, extra headers or
+model -- there is deliberately no "save settings" endpoint.
+
+| | |
+| --- | --- |
+| On your device | In this browser's storage (`localStorage`, or `sessionStorage` if you untick **Remember on this device**, which forgets them when the tab closes). Not encrypted, so anyone with access to that browser profile can read them. **Forget all AI settings** erases them. |
+| Sent to the server | Only on the few requests that actually call the AI (Ask AI, Analyze All, AI Review, chat, Test Connection), as `x-ai-*` request headers over HTTPS. Uploads, comments, exports, etc. never carry them. |
+| On the server | Held in memory for the duration of that one request, used to call your gateway, then discarded. Never written to disk or the document, never kept in a global, never in the audit logs, and scrubbed from error messages (even if a gateway echoes your token back). Another device or browser cannot use your settings. |
+| Honest limit | AI calls are made *by the server*, so your token does pass through the server's memory (and, on Render, its HTTPS proxy) every time you use an AI feature. "Never stored" is the guarantee; "never leaves your device" is not possible with server-side AI. Removing the server from that path would mean calling your gateway directly from the browser, which needs your gateway to allow cross-origin browser requests and a significant rewrite -- say so if you want that. |
+
+Each save takes effect immediately, with no restart. If you use the
+environment variables below instead, those values live on the server (Render's
+dashboard / the container's `.env`) -- the opposite of device-only -- so leave
+them unset if you want the guarantee above.
+
+**Environment variables** are an optional server-side alternative for a shared,
+operator-managed key (the token is then stored by whoever hosts the app, and
+anyone who can reach the app can use it): on Render add them under
+*Environment*; in the container put them in `.env`. A value entered in the
+browser always overrides the matching variable for that request.
 
 | Variable | Meaning |
 | --- | --- |
@@ -302,24 +318,25 @@ the health status.
 - **Healthcheck** against `/api/health` (`docker compose ps` shows
   `healthy`). The response also reports `dataDirIsMountPoint: true`, confirming
   data really is on the volume.
-- **One server process, on purpose.** The API key/base URL/model entered in
-  the Settings modal live in that process's memory.
+- **Stateless AI settings.** Anything entered in the Settings modal stays in
+  the browser and is sent only with AI requests; the container stores none of
+  it (see "Where your key and URL are stored").
 
 ### Configuring AI
 
 Two ways; pick one:
 
-1. **Environment (recommended for CUI):** put `ANTHROPIC_API_KEY=...` in
-   `.env` (git-ignored) and restart. The key stays on the host and in the
-   container's environment and never reaches the browser.
-2. **In the app:** leave it blank and use the gear (Settings) modal. The key
-   is held in server memory *and* cached in that browser's local storage so
-   you don't retype it after a restart -- fine on your own account, not on a
-   shared profile.
+1. **In the app (default):** open the gear (Settings) modal and enter your
+   key/token, base URL, authentication mode and model. They are kept only in
+   that browser on that device and sent with each AI request; the container
+   never stores them. See "Connecting to your own Claude API or work gateway".
+2. **Environment (shared, operator-managed):** put `ANTHROPIC_API_KEY=...` (and
+   the other variables in `.env.example`) in `.env` and restart. The key then
+   lives on the host and in the container's environment for everyone who can
+   reach the app. Fine for a single-user desktop; leave blank to use option 1.
 
-For a Bedrock-style gateway also set `ANTHROPIC_BASE_URL` (host only, no
-`/v1`) and `PPTX_DEV_AI_MODEL` to the gateway's model id. The Settings modal's
-**Test Connection** button confirms it works before you rely on it.
+The Settings modal's **Test Connection** button confirms the configuration works
+before you rely on it.
 
 ### Backup and restore
 
@@ -421,25 +438,15 @@ service, one URL, same-origin requests, no CORS or reverse-proxy setup.
 3. Once deployed, Render gives you a `https://<service>.onrender.com` URL —
    open it directly; there's no separate frontend URL/build to manage.
 
-**No `ANTHROPIC_API_KEY` (or `ANTHROPIC_BASE_URL`) is baked into this
-deployment on purpose** — `render.yaml` doesn't declare either one. Each
-browser session sets its own key (and, to test against an
-Anthropic-API-compatible Bedrock gateway, base URL and model) at runtime
-via the ⚙ Settings modal instead. Server-side, it lives only in that
-process's memory (lost on restart) and never touches this repo or the
-Render dashboard. Client-side, the frontend also caches whatever you
-entered in that browser's `localStorage` (`frontend/src/aiSettingsCache.ts`)
-and silently re-applies it to the backend on every page load (`App.tsx`'s
-`restoreCachedAiSettings`) — so in practice you only enter it once per
-browser, even across a Render restart/redeploy, without it needing to be
-a real persisted server-side secret. Clearing/resetting a field in the
-modal removes it from `localStorage` too. This means the key sits in
-plaintext in that browser's local storage — fine for a single
-operator's own browser, not for a shared/public machine. If you want a
-shared key baked into the deployment instead (skipping this per-browser
-setup entirely), add `ANTHROPIC_API_KEY` as an env var in the Render
-dashboard's Environment tab yourself — just note that whoever can reach
-this URL can then use it without entering anything.
+**No `ANTHROPIC_API_KEY` (or `ANTHROPIC_BASE_URL`) is set in this deployment
+on purpose** -- `render.yaml` doesn't declare either one. Each user enters
+their own key/token and base URL in the ⚙ Settings modal; they stay in that
+user's browser and are sent only with AI requests (see "Where your key and URL
+are stored"). Nothing is saved on Render, so a restart, redeploy or spin-down
+loses nothing and there is no secret to rotate on the server. If you instead
+want a shared key for everyone who can reach the URL, add `ANTHROPIC_API_KEY`
+as an env var in the Render dashboard's Environment tab yourself -- but then
+anyone who can reach the URL can use it, and it is stored by Render.
 
 To build and run it locally the same way Render will:
 ```bash
@@ -491,18 +498,19 @@ For a containerized deployment:
   produces a `/v1/v1/messages` 404 against a real gateway (this is a
   natural mistake since several other OpenAI/Anthropic-compatible tools
   *do* want `/v1` included; `config.normalize_base_url()` strips a trailing
-  `/v1` either way, so getting this wrong is harmless). All three can also
-  be set at runtime from the webapp's Settings modal (⚙) without a
-  redeploy — see `backend/app/api/settings.py`; that's a dev/testing
-  convenience only; a real deployment should inject them as env vars via
-  your container platform's secrets manager. This only works for a gateway
+  `/v1` either way, so getting this wrong is harmless). Users can also
+  enter them in the webapp's Settings modal (⚙); those stay in the user's
+  browser and are sent per AI request (see `backend/app/ai/credentials.py`),
+  never stored server-side. For a shared deployment where the
+  organization holds the key, inject them as env vars via your container
+  platform's secrets manager instead. This only works for a gateway
   that's already Anthropic-API-compatible — calling Bedrock's own runtime
   endpoint directly (different request/response shape, AWS SigV4 or
   Bedrock's native API-key auth) would need the Anthropic SDK's separate
   `AnthropicBedrock` client instead, which isn't wired up here.
 - The Settings modal's **Test Connection** button sends one minimal real
-  request (`max_tokens=1`) using whichever key/base URL/model are
-  currently active — the exact same client construction "Ask AI" uses —
+  request (`max_tokens=1`) using the key/base URL/model currently in the
+  form (saved or not) — the exact same client construction "Ask AI" uses —
   and reports the model, base URL, and round-trip latency on success, or
   the real error otherwise (`POST /api/settings/anthropic-key/test`).
   Point of this over just clicking "Ask AI" on a real comment: it's free

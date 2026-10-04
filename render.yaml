@@ -9,15 +9,11 @@ services:
                   # every deploy/restart
     envVars:
       # No ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL here on purpose: this
-      # deployment never bakes in an org-wide AI credential. Each browser
-      # session sets its own key (and, for a Bedrock gateway, base URL) at
-      # runtime via the in-app Settings modal (PUT /api/settings/anthropic-key)
-      # -- it's held in that server process's memory only and is never
-      # written back to this file or the Render dashboard.
-      # To use a work gateway without entering anything in the browser, add
-      # these in the Render dashboard's Environment tab (sync: false = never
-      # stored in this file): ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN),
-      # ANTHROPIC_BASE_URL, PPTX_DEV_AUTH_MODE=bearer, PPTX_DEV_EXTRA_HEADERS.
+      # deployment never bakes in an AI credential. Each user enters their own
+      # key/token and base URL in the in-app Settings modal; those stay in the
+      # user's browser and are sent only with AI requests -- the server stores
+      # nothing. (Setting ANTHROPIC_API_KEY etc. in the Render dashboard would
+      # instead create a shared, server-held key.)
       - key: PPTX_DEV_AI_MODEL
         value: claude-sonnet-5
       - key: PPTX_DEV_DATA_DIR

@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
-import { cacheApiKey, cacheAuthMode, cacheBaseUrl, cacheExtraHeaders, cacheModel } from '../aiSettingsCache'
-import { api, type ApiKeyStatus, type TestConnectionResult } from '../api'
+import {
+  clearAiSettings,
+  EMPTY_AI_SETTINGS,
+  isRemembered,
+  loadAiSettings,
+  maskKey,
+  saveAiSettings,
+  type AiSettings,
+} from '../aiSettings'
+import { api, type ServerDefaults, type TestConnectionResult } from '../api'
 
 type TestOutcome = TestConnectionResult | { ok: false; error: string }
 
@@ -11,175 +19,53 @@ interface Props {
 }
 
 export default function SettingsModal({ onClose, authorName, onAuthorNameChange }: Props) {
-  const [status, setStatus] = useState<ApiKeyStatus | null>(null)
-  const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [savedJustNow, setSavedJustNow] = useState(false)
   const [nameInput, setNameInput] = useState(authorName)
   const [nameSaved, setNameSaved] = useState(false)
-  const [baseUrlInput, setBaseUrlInput] = useState('')
-  const [baseUrlBusy, setBaseUrlBusy] = useState(false)
-  const [baseUrlError, setBaseUrlError] = useState<string | null>(null)
-  const [baseUrlSavedJustNow, setBaseUrlSavedJustNow] = useState(false)
-  const [modelInput, setModelInput] = useState('')
-  const [modelBusy, setModelBusy] = useState(false)
-  const [modelError, setModelError] = useState<string | null>(null)
-  const [modelSavedJustNow, setModelSavedJustNow] = useState(false)
-  const [authBusy, setAuthBusy] = useState(false)
-  const [authError, setAuthError] = useState<string | null>(null)
-  const [authSavedJustNow, setAuthSavedJustNow] = useState(false)
-  const [headersInput, setHeadersInput] = useState('')
-  const [headersBusy, setHeadersBusy] = useState(false)
-  const [headersError, setHeadersError] = useState<string | null>(null)
-  const [headersSavedJustNow, setHeadersSavedJustNow] = useState(false)
+
+  const [saved, setSaved] = useState<AiSettings>(loadAiSettings)
+  const [form, setForm] = useState<AiSettings>(loadAiSettings)
+  const [remember, setRemember] = useState(isRemembered)
+  const [savedJustNow, setSavedJustNow] = useState(false)
+  const [server, setServer] = useState<ServerDefaults | null>(null)
   const [testBusy, setTestBusy] = useState(false)
   const [testResult, setTestResult] = useState<TestOutcome | null>(null)
 
   useEffect(() => {
-    api
-      .getApiKeyStatus()
-      .then((s) => {
-        setStatus(s)
-        setBaseUrlInput(s.baseUrl || '')
-        setModelInput(s.model)
-      })
-      .catch((e) => setError((e as Error).message))
+    api.getServerDefaults().then(setServer).catch(() => setServer(null))
   }, [])
 
-  async function save() {
-    setBusy(true)
-    setError(null)
-    try {
-      const s = await api.setApiKey(input)
-      setStatus(s)
-      cacheApiKey(input.trim())
-      setInput('')
-      setSavedJustNow(true)
-      setTimeout(() => setSavedJustNow(false), 2500)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(false)
+  const set = <K extends keyof AiSettings>(key: K, value: AiSettings[K]) => setForm((f) => ({ ...f, [key]: value }))
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved) || remember !== isRemembered()
+  const anySaved = Object.entries(saved).some(([k, v]) => v && !(k === 'authMode' && v === 'api_key'))
+
+  function save() {
+    const trimmed: AiSettings = {
+      ...form,
+      apiKey: form.apiKey.trim(),
+      baseUrl: form.baseUrl.trim(),
+      extraHeaders: form.extraHeaders.trim(),
+      model: form.model.trim(),
     }
+    saveAiSettings(trimmed, remember)
+    setSaved(trimmed)
+    setForm(trimmed)
+    setSavedJustNow(true)
+    setTimeout(() => setSavedJustNow(false), 2500)
   }
 
-  async function clear() {
-    setBusy(true)
-    setError(null)
-    try {
-      const s = await api.setApiKey('')
-      setStatus(s)
-      cacheApiKey('')
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function saveBaseUrl() {
-    setBaseUrlBusy(true)
-    setBaseUrlError(null)
-    try {
-      const s = await api.setBaseUrl(baseUrlInput.trim())
-      setStatus(s)
-      cacheBaseUrl(s.baseUrl || '')
-      setBaseUrlSavedJustNow(true)
-      setTimeout(() => setBaseUrlSavedJustNow(false), 2500)
-    } catch (e) {
-      setBaseUrlError((e as Error).message)
-    } finally {
-      setBaseUrlBusy(false)
-    }
-  }
-
-  async function clearBaseUrl() {
-    setBaseUrlBusy(true)
-    setBaseUrlError(null)
-    try {
-      const s = await api.setBaseUrl('')
-      setStatus(s)
-      setBaseUrlInput('')
-      cacheBaseUrl('')
-    } catch (e) {
-      setBaseUrlError((e as Error).message)
-    } finally {
-      setBaseUrlBusy(false)
-    }
-  }
-
-  async function saveAuthMode(mode: string) {
-    setAuthBusy(true)
-    setAuthError(null)
-    try {
-      const s = await api.setAuthMode(mode)
-      setStatus(s)
-      cacheAuthMode(s.authModeSource === 'runtime' ? s.authMode : '')
-      setAuthSavedJustNow(true)
-      setTimeout(() => setAuthSavedJustNow(false), 2500)
-    } catch (e) {
-      setAuthError((e as Error).message)
-    } finally {
-      setAuthBusy(false)
-    }
-  }
-
-  async function saveHeaders(text: string) {
-    setHeadersBusy(true)
-    setHeadersError(null)
-    try {
-      const s = await api.setExtraHeaders(text)
-      setStatus(s)
-      cacheExtraHeaders(text.trim() && s.extraHeadersSource === 'runtime' ? text : '')
-      setHeadersInput('')
-      setHeadersSavedJustNow(true)
-      setTimeout(() => setHeadersSavedJustNow(false), 2500)
-    } catch (e) {
-      setHeadersError((e as Error).message)
-    } finally {
-      setHeadersBusy(false)
-    }
-  }
-
-  async function saveModel() {
-    setModelBusy(true)
-    setModelError(null)
-    try {
-      const s = await api.setModel(modelInput.trim())
-      setStatus(s)
-      setModelInput(s.model)
-      cacheModel(s.modelSource === 'runtime' ? s.model : '')
-      setModelSavedJustNow(true)
-      setTimeout(() => setModelSavedJustNow(false), 2500)
-    } catch (e) {
-      setModelError((e as Error).message)
-    } finally {
-      setModelBusy(false)
-    }
-  }
-
-  async function resetModel() {
-    setModelBusy(true)
-    setModelError(null)
-    try {
-      const s = await api.setModel('')
-      setStatus(s)
-      setModelInput(s.model)
-      cacheModel('')
-    } catch (e) {
-      setModelError((e as Error).message)
-    } finally {
-      setModelBusy(false)
-    }
+  function forgetAll() {
+    clearAiSettings()
+    setSaved(EMPTY_AI_SETTINGS)
+    setForm(EMPTY_AI_SETTINGS)
+    setTestResult(null)
   }
 
   async function testConnection() {
     setTestBusy(true)
     setTestResult(null)
     try {
-      const result = await api.testAnthropicConnection()
-      setTestResult(result)
+      // Tests the form's CURRENT values, saved or not.
+      setTestResult(await api.testAnthropicConnection(form))
     } catch (e) {
       setTestResult({ ok: false, error: (e as Error).message })
     } finally {
@@ -227,201 +113,91 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
 
         <hr className="modal-divider" />
 
-        <label className="modal-label">API key / auth token</label>
-        <p className="modal-hint">
-          Your Anthropic API key, or your work gateway’s token (choose how it is sent under
-          Authentication below). Cached in this browser (not encrypted).
-        </p>
-
-        {status && (
-          <div className={`key-status ${status.configured ? 'key-status-ok' : 'key-status-empty'}`}>
-            {status.configured ? (
-              <>
-                Configured ({status.source === 'runtime' ? 'set here' : 'from environment'}):{' '}
-                <code>{status.masked}</code>
-              </>
-            ) : (
-              'No API key configured — "Ask AI" will fail until one is set.'
-            )}
-          </div>
-        )}
-
-        <div className="modal-row">
-          <input
-            type="password"
-            className="modal-input"
-            placeholder="sk-ant-... or your gateway token"
-            title="Used for &quot;Ask AI&quot;. For a real deployment, set ANTHROPIC_API_KEY via your platform's secrets manager instead."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && input.trim()) save()
-            }}
-            disabled={busy}
-          />
-          <button disabled={busy || !input.trim()} onClick={save}>
-            Save
-          </button>
+        <label className="modal-label">AI connection</label>
+        <div className="privacy-note">
+          🔒 Stored <strong>only on this device</strong> (in this browser). The server never saves your key,
+          base URL or headers: they are sent with each AI request, used once, and discarded.
         </div>
 
-        {savedJustNow && <p className="modal-success">Saved.</p>}
-        {error && <p className="error-text">{error}</p>}
-
-        {status?.configured && (
-          <button className="modal-clear" disabled={busy} onClick={clear}>
-            Clear key
-          </button>
+        {server?.serverKeyConfigured && (
+          <p className="modal-hint">
+            This server also has its own key set in its environment; it is used only for fields you leave
+            blank here.
+          </p>
         )}
 
-        <hr className="modal-divider" />
+        <label className="modal-sublabel">API key / auth token</label>
+        <input
+          type="password"
+          className="modal-input modal-full"
+          placeholder="sk-ant-... or your gateway token"
+          autoComplete="off"
+          value={form.apiKey}
+          onChange={(e) => set('apiKey', e.target.value)}
+        />
+        {saved.apiKey && (
+          <p className="modal-hint">
+            Saved on this device: <code>{maskKey(saved.apiKey)}</code>
+          </p>
+        )}
 
-        <label className="modal-label">API base URL</label>
+        <label className="modal-sublabel">API base URL</label>
+        <input
+          className="modal-input modal-full"
+          placeholder={server?.baseUrl || 'https://your-gateway.example.com  (blank = api.anthropic.com)'}
+          value={form.baseUrl}
+          onChange={(e) => set('baseUrl', e.target.value)}
+        />
         <p className="modal-hint">
-          For a gateway/proxy instead of the public API. Host (plus any path prefix your gateway uses),
-          without the trailing /v1 — it is added automatically.
+          Host plus any path prefix your gateway uses, without the trailing /v1 — it is added automatically.
         </p>
 
-        {status && (
-          <div className={`key-status ${status.baseUrl ? 'key-status-ok' : 'key-status-empty'}`}>
-            {status.baseUrl ? (
-              <>
-                Using ({status.baseUrlSource === 'runtime' ? 'set here' : 'from environment'}):{' '}
-                <code>{status.baseUrl}</code>
-              </>
-            ) : (
-              'Using the default Anthropic API endpoint.'
-            )}
-          </div>
-        )}
+        <label className="modal-sublabel">Authentication</label>
+        <select
+          className="modal-input modal-select"
+          value={form.authMode}
+          onChange={(e) => set('authMode', e.target.value as AiSettings['authMode'])}
+        >
+          <option value="api_key">API key (x-api-key header) — api.anthropic.com</option>
+          <option value="bearer">Bearer token (Authorization header) — most work gateways</option>
+          <option value="both">Both headers</option>
+        </select>
+        <p className="modal-hint">If Test Connection reports HTTP 401, try the other option.</p>
 
-        <div className="modal-row">
-          <input
-            className="modal-input"
-            placeholder="https://your-bedrock-gateway.example.mil"
-            title="Leave blank for the default (api.anthropic.com). Just the host — no /v1 suffix, it's added automatically."
-            value={baseUrlInput}
-            onChange={(e) => setBaseUrlInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') saveBaseUrl()
-            }}
-            disabled={baseUrlBusy}
-          />
-          <button disabled={baseUrlBusy} onClick={saveBaseUrl}>
-            Save
-          </button>
-        </div>
-
-        {baseUrlSavedJustNow && <p className="modal-success">Saved.</p>}
-        {baseUrlError && <p className="error-text">{baseUrlError}</p>}
-
-        {status?.baseUrlSource === 'runtime' && (
-          <button className="modal-clear" disabled={baseUrlBusy} onClick={clearBaseUrl}>
-            Reset to default
-          </button>
-        )}
-
-        <hr className="modal-divider" />
-
-        <label className="modal-label">Authentication</label>
-        <p className="modal-hint">
-          How the key/token above is sent. The public API uses <code>x-api-key</code>; most work
-          gateways expect <code>Authorization: Bearer</code>. If you get a 401, try the other one.
-        </p>
-
-        <div className="modal-row">
-          <select
-            className="modal-input modal-select"
-            value={status?.authMode ?? 'api_key'}
-            disabled={authBusy || !status}
-            onChange={(e) => saveAuthMode(e.target.value)}
-          >
-            <option value="api_key">API key (x-api-key header) — api.anthropic.com</option>
-            <option value="bearer">Bearer token (Authorization header) — most work gateways</option>
-            <option value="both">Both headers</option>
-          </select>
-        </div>
-        {authSavedJustNow && <p className="modal-success">Saved.</p>}
-        {authError && <p className="error-text">{authError}</p>}
-
-        <hr className="modal-divider" />
-
-        <label className="modal-label">Extra headers (optional)</label>
-        <p className="modal-hint">
-          For gateways that need more than a key, e.g. a tenant or subscription id. One{' '}
-          <code>Name: value</code> per line. Values are never shown again after saving.
-        </p>
-
-        {status && (
-          <div className={`key-status ${status.extraHeaders.length ? 'key-status-ok' : 'key-status-empty'}`}>
-            {status.extraHeaders.length ? (
-              <>
-                Sending ({status.extraHeadersSource === 'runtime' ? 'set here' : 'from environment'}):{' '}
-                <code>{status.extraHeaders.join(', ')}</code>
-              </>
-            ) : (
-              'No extra headers.'
-            )}
-          </div>
-        )}
-
+        <label className="modal-sublabel">Extra headers (optional)</label>
         <textarea
           className="modal-input modal-textarea"
           rows={3}
           placeholder={'X-Tenant-Id: my-team\nOcp-Apim-Subscription-Key: ...'}
-          value={headersInput}
-          onChange={(e) => setHeadersInput(e.target.value)}
-          disabled={headersBusy}
+          value={form.extraHeaders}
+          onChange={(e) => set('extraHeaders', e.target.value)}
         />
-        <div className="modal-row">
-          <button disabled={headersBusy || !headersInput.trim()} onClick={() => saveHeaders(headersInput)}>
-            Save headers
-          </button>
-          {status?.extraHeadersSource === 'runtime' && (
-            <button disabled={headersBusy} onClick={() => saveHeaders('')}>
-              Clear headers
-            </button>
-          )}
-        </div>
-        {headersSavedJustNow && <p className="modal-success">Saved.</p>}
-        {headersError && <p className="error-text">{headersError}</p>}
+        <p className="modal-hint">One “Name: value” per line, for gateways that need more than a token.</p>
 
-        <hr className="modal-divider" />
+        <label className="modal-sublabel">Model</label>
+        <input
+          className="modal-input modal-full"
+          placeholder={server?.defaultModel || 'claude-sonnet-5'}
+          value={form.model}
+          onChange={(e) => set('model', e.target.value)}
+        />
+        <p className="modal-hint">
+          The model id your gateway serves. Bedrock-style gateways use ids like
+          anthropic.claude-sonnet-4-5-20250929-v1:0.
+        </p>
 
-        <label className="modal-label">Model</label>
-        <p className="modal-hint">Bedrock gateways use different model IDs than the direct API.</p>
-
-        {status && (
-          <div className={`key-status ${status.modelSource === 'runtime' ? 'key-status-ok' : 'key-status-empty'}`}>
-            Using ({status.modelSource === 'runtime' ? 'set here' : 'from environment/default'}):{' '}
-            <code>{status.model}</code>
-          </div>
-        )}
+        <label className="modal-checkbox">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          Remember on this device (untick to forget when this tab closes)
+        </label>
 
         <div className="modal-row">
-          <input
-            className="modal-input"
-            placeholder={status?.defaultModel || 'claude-sonnet-5'}
-            title='e.g. anthropic.claude-sonnet-4-5-20250929-v1:0 for a Bedrock gateway'
-            value={modelInput}
-            onChange={(e) => setModelInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && modelInput.trim()) saveModel()
-            }}
-            disabled={modelBusy}
-          />
-          <button disabled={modelBusy || !modelInput.trim()} onClick={saveModel}>
-            Save
+          <button className="primary" disabled={!dirty} onClick={save}>
+            Save on this device
           </button>
+          {anySaved && <button onClick={forgetAll}>Forget all AI settings</button>}
         </div>
-
-        {modelSavedJustNow && <p className="modal-success">Saved.</p>}
-        {modelError && <p className="error-text">{modelError}</p>}
-
-        {status?.modelSource === 'runtime' && (
-          <button className="modal-clear" disabled={modelBusy} onClick={resetModel}>
-            Reset to default
-          </button>
-        )}
+        {savedJustNow && <p className="modal-success">Saved on this device.</p>}
 
         <hr className="modal-divider" />
 
@@ -429,7 +205,7 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
         <button
           disabled={testBusy}
           onClick={testConnection}
-          title="Sends one minimal real request using the settings above (save changes first)"
+          title="Sends one minimal real request using the values above (saved or not)"
         >
           {testBusy ? 'Testing…' : 'Test Connection'}
         </button>

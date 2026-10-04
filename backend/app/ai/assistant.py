@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import anthropic
 from anthropic import Anthropic
 
-from .. import config
+from . import credentials
 
 SYSTEM_PROMPT = """You are an AI editorial assistant that adjudicates reviewer comments on a \
 PowerPoint presentation. PowerPoint has no Track Changes, so when you edit text the change is applied \
@@ -151,14 +151,16 @@ class AdjudicationError(RuntimeError):
 
 
 def _client() -> Anthropic:
-    if not config.ANTHROPIC_API_KEY:
+    creds = credentials.effective()
+    if not creds.api_key:
         raise AdjudicationError(
-            "ANTHROPIC_API_KEY is not set in the backend environment; AI adjudication is unavailable."
+            "No API key available. Open Settings and enter your API key or work token "
+            "(it is kept only on this device and sent with each AI request)."
         )
-    key = config.ANTHROPIC_API_KEY
-    headers = dict(config.EXTRA_HEADERS)
-    kwargs: dict = {"base_url": config.ANTHROPIC_BASE_URL or None}
-    if config.AUTH_MODE == "bearer":
+    key = creds.api_key
+    headers = dict(creds.extra_headers)
+    kwargs: dict = {"base_url": creds.base_url or None}
+    if creds.auth_mode == "bearer":
         # Authorization: Bearer <token> and NO x-api-key header. The SDK would
         # otherwise fall back to the ANTHROPIC_API_KEY environment variable
         # when api_key is None (and prefers x-api-key when both exist), so
@@ -168,7 +170,7 @@ def _client() -> Anthropic:
         client = Anthropic(api_key=None, auth_token=key, **kwargs)
         client.api_key = None
         return client
-    if config.AUTH_MODE == "both":
+    if creds.auth_mode == "both":
         # The SDK only ever sends one of its two credentials, so send the
         # Bearer header ourselves alongside x-api-key.
         headers["Authorization"] = f"Bearer {key}"
@@ -177,7 +179,17 @@ def _client() -> Anthropic:
     return Anthropic(api_key=key, **kwargs)
 
 
+def _model() -> str:
+    return credentials.effective().model
+
+
 def describe_api_error(exc: Exception) -> str:
+    """Diagnostic message for a failed AI call (see _describe), with the
+    current request's secrets scrubbed out."""
+    return credentials.redact(_describe(exc))
+
+
+def _describe(exc: Exception) -> str:
     """A diagnostic message for a failed AI call: what was requested, what
     came back, and the usual cause -- so a misconfigured gateway can be fixed
     from the message alone, without reading server logs."""
@@ -228,7 +240,7 @@ def test_connection() -> dict:
     started = time.monotonic()
     try:
         resp = client.messages.create(
-            model=config.AI_MODEL,
+            model=_model(),
             max_tokens=1,
             messages=[{"role": "user", "content": "Hi"}],
         )
@@ -236,8 +248,8 @@ def test_connection() -> dict:
         raise AdjudicationError(describe_api_error(exc)) from exc
     latency_ms = round((time.monotonic() - started) * 1000)
     return {
-        "model": config.AI_MODEL,
-        "baseUrl": config.ANTHROPIC_BASE_URL or None,
+        "model": _model(),
+        "baseUrl": credentials.redact(credentials.effective().base_url) or None,
         "latencyMs": latency_ms,
         "responseId": resp.id,
     }
@@ -282,7 +294,7 @@ Call submit_adjudication with your decision."""
 
     try:
         resp = client.messages.create(
-            model=config.AI_MODEL,
+            model=_model(),
             max_tokens=1024,
             system=SYSTEM_PROMPT,
             tools=[ADJUDICATE_TOOL],
@@ -370,7 +382,7 @@ Reviewer comment under discussion (id={comment_id}, author={comment_author}):
 
     try:
         resp = client.messages.create(
-            model=config.AI_MODEL,
+            model=_model(),
             max_tokens=1024,
             system=CHAT_SYSTEM_PROMPT,
             messages=messages,
@@ -405,7 +417,7 @@ Call submit_review_comments with any new review comments for this slide."""
 
     try:
         resp = client.messages.create(
-            model=config.AI_MODEL,
+            model=_model(),
             max_tokens=1536,
             system=REVIEW_SYSTEM_PROMPT,
             tools=[REVIEW_TOOL],

@@ -17,19 +17,6 @@ class AdjudicateRequest(BaseModel):
     author: str = "AI Assistant"
 
 
-class SetApiKeyRequest(BaseModel):
-    # None on any field means "leave unchanged" so the API key, base URL, and
-    # model can be saved independently from the settings modal's separate
-    # forms; "" clears that field back to its environment-variable default.
-    api_key: str | None = None
-    base_url: str | None = None
-    model: str | None = None
-    # "api_key" | "bearer" | "both" ("" resets to the default).
-    auth_mode: str | None = None
-    # One "Name: value" per line, or a JSON object ("" clears them).
-    extra_headers: str | None = None
-
-
 class TextRangeEditRequest(BaseModel):
     start_run_id: str
     start_offset: int

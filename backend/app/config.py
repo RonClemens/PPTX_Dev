@@ -31,6 +31,8 @@ def normalize_base_url(url: str) -> str:
 
 AUTH_MODES = ("api_key", "bearer", "both")
 _HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+# Headers that would corrupt the HTTP request itself; never accepted as "extra".
+_FORBIDDEN_HEADERS = {"host", "content-length", "transfer-encoding", "connection", "content-type"}
 
 
 def normalize_auth_mode(value: str) -> str:
@@ -81,6 +83,8 @@ def parse_extra_headers(text: str) -> dict[str, str]:
     for name, value in pairs:
         if not _HEADER_NAME_RE.match(name):
             raise ValueError(f"invalid header name: {name!r}")
+        if name.lower() in _FORBIDDEN_HEADERS:
+            raise ValueError(f"header {name} can't be overridden")
         if "\r" in value or "\n" in value or len(value) > 4096:
             raise ValueError(f"invalid value for header {name}")
         headers[name] = value
@@ -89,29 +93,26 @@ def parse_extra_headers(text: str) -> dict[str, str]:
     return headers
 
 
-# ANTHROPIC_AUTH_TOKEN is accepted as an alias (it is what Claude Code uses
-# for gateways); when only it is set, the token is sent as a Bearer token.
+# SERVER-SIDE DEFAULTS FROM THE ENVIRONMENT ONLY. Credentials a user enters in
+# the browser are never stored here: they travel with each AI request and live
+# only for that request (see app/ai/credentials.py). These env vars exist for
+# operators who deliberately want a shared, server-held key.
+# ANTHROPIC_AUTH_TOKEN is accepted as an alias (it is what Claude Code uses for
+# gateways); when only it is set, the token is sent as a Bearer token.
 _env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 _env_token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "").strip()
 ANTHROPIC_API_KEY = _env_key or _env_token
-ANTHROPIC_API_KEY_SET_AT_RUNTIME = False  # True once /api/settings/anthropic-key overrides it
 ANTHROPIC_BASE_URL = normalize_base_url(os.environ.get("ANTHROPIC_BASE_URL", ""))
-ANTHROPIC_BASE_URL_SET_AT_RUNTIME = False  # True once /api/settings/anthropic-key overrides it
-DEFAULT_AUTH_MODE = normalize_auth_mode(
+AUTH_MODE = normalize_auth_mode(
     os.environ.get("PPTX_DEV_AUTH_MODE", "") or ("bearer" if _env_token and not _env_key else "")
 )
-AUTH_MODE = DEFAULT_AUTH_MODE
-AUTH_MODE_SET_AT_RUNTIME = False
 try:
     # A one-line env var can't hold real newlines, so a literal backslash-n
     # between headers is accepted too.
-    DEFAULT_EXTRA_HEADERS = parse_extra_headers(os.environ.get("PPTX_DEV_EXTRA_HEADERS", "").replace("\\n", "\n"))
+    EXTRA_HEADERS = parse_extra_headers(os.environ.get("PPTX_DEV_EXTRA_HEADERS", "").replace("\\n", "\n"))
 except ValueError as _exc:  # a bad env value shouldn't stop the app booting
     print(f"warning: ignoring PPTX_DEV_EXTRA_HEADERS: {_exc}")
-    DEFAULT_EXTRA_HEADERS = {}
-EXTRA_HEADERS = dict(DEFAULT_EXTRA_HEADERS)
-EXTRA_HEADERS_SET_AT_RUNTIME = False
+    EXTRA_HEADERS = {}
 AI_MODEL = os.environ.get("PPTX_DEV_AI_MODEL", "claude-sonnet-5").strip()
-AI_MODEL_SET_AT_RUNTIME = False  # True once /api/settings/anthropic-key overrides it
-DEFAULT_AI_MODEL = AI_MODEL  # what "reset to default" reverts to
+DEFAULT_AI_MODEL = AI_MODEL
 AI_ASSISTANT_AUTHOR = "AI Assistant"

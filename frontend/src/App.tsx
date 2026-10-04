@@ -7,7 +7,6 @@ import CommentsSidebar from './components/CommentsSidebar'
 import DocumentViewer from './components/DocumentViewer'
 import SettingsModal from './components/SettingsModal'
 import UploadPanel from './components/UploadPanel'
-import { loadCachedAiSettings } from './aiSettingsCache'
 import { scrollTargetForComment } from './documentUtils'
 import type { Adjudication, AppMode, DocumentMeta, DocumentPayload, ViewMode } from './types'
 
@@ -127,31 +126,7 @@ export default function App() {
       const docs = await refreshDocumentList()
       await restoreLastOpenDocument(docs)
     })()
-    restoreCachedAiSettings()
   }, [])
-
-  async function restoreCachedAiSettings() {
-    const cached = loadCachedAiSettings()
-    const overrides: {
-      api_key?: string
-      base_url?: string
-      model?: string
-      auth_mode?: string
-      extra_headers?: string
-    } = {}
-    if (cached.apiKey) overrides.api_key = cached.apiKey
-    if (cached.baseUrl) overrides.base_url = cached.baseUrl
-    if (cached.model) overrides.model = cached.model
-    if (cached.authMode) overrides.auth_mode = cached.authMode
-    if (cached.extraHeaders) overrides.extra_headers = cached.extraHeaders
-    if (Object.keys(overrides).length === 0) return
-    try {
-      await api.restoreAiSettings(overrides)
-    } catch {
-      // Ignore -- if this fails, it'll surface naturally the moment the
-      // user actually tries an AI feature, with its own inline error.
-    }
-  }
 
   // The document itself, its comments, decisions and chats all already
   // persist server-side (JSON files on a mounted disk) -- but without this,

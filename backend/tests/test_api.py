@@ -281,7 +281,7 @@ def _fake_client(captured: dict, name: str, data: dict):
 def test_adjudicate_without_api_key_returns_502(client):
     doc_id = upload(client)
     res = client.post(f"/api/documents/{doc_id}/comments/0-1/adjudicate", json={})
-    assert res.status_code == 502 and "ANTHROPIC_API_KEY" in res.json()["detail"]
+    assert res.status_code == 502 and "No API key available" in res.json()["detail"]
 
 
 def test_adjudicate_comment_wraps_anthropic_sdk_errors():

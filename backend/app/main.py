@@ -2,11 +2,13 @@ import datetime as dt
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import config
+from .ai import credentials
 from .api import documents, edits, comments, ai, settings
 from .storage import store
 
@@ -29,6 +31,22 @@ if config.CORS_ORIGINS:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+@app.middleware("http")
+async def per_request_ai_credentials(request: Request, call_next):
+    """Make the browser-supplied AI credentials (x-ai-* headers) visible to
+    this one request and nothing else: set before the handler runs, reset
+    when it finishes. Never stored, never logged."""
+    try:
+        overrides = credentials.from_request_headers(request.headers)
+    except credentials.CredentialError as exc:
+        return JSONResponse({"detail": f"Invalid AI setting: {exc}"}, status_code=400)
+    token = credentials.set_for_request(overrides)
+    try:
+        return await call_next(request)
+    finally:
+        credentials.reset(token)
+
 
 app.include_router(documents.router)
 app.include_router(edits.router)
