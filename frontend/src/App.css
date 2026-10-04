@@ -1766,3 +1766,17 @@
 .queue-original-input {
   min-width: 160px;
 }
+
+.modal-textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+  margin-bottom: 6px;
+}
+
+.modal-select {
+  width: 100%;
+  min-width: 0;
+}

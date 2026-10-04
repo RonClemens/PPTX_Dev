@@ -194,12 +194,30 @@ export const api = {
       body: JSON.stringify({ model }),
     }),
 
+  setAuthMode: (authMode: string) =>
+    req<ApiKeyStatus>('/api/settings/anthropic-key', {
+      method: 'PUT',
+      body: JSON.stringify({ auth_mode: authMode }),
+    }),
+
+  setExtraHeaders: (extraHeaders: string) =>
+    req<ApiKeyStatus>('/api/settings/anthropic-key', {
+      method: 'PUT',
+      body: JSON.stringify({ extra_headers: extraHeaders }),
+    }),
+
   testAnthropicConnection: () =>
     req<TestConnectionResult>('/api/settings/anthropic-key/test', { method: 'POST' }),
 
   // Combined PUT for restoring browser-cached settings on load -- only the
   // provided fields are sent, so it never clobbers a field that isn't cached.
-  restoreAiSettings: (overrides: { api_key?: string; base_url?: string; model?: string }) =>
+  restoreAiSettings: (overrides: {
+    api_key?: string
+    base_url?: string
+    model?: string
+    auth_mode?: string
+    extra_headers?: string
+  }) =>
     req<ApiKeyStatus>('/api/settings/anthropic-key', {
       method: 'PUT',
       body: JSON.stringify(overrides),
@@ -223,4 +241,10 @@ export interface ApiKeyStatus {
   model: string
   modelSource?: 'env' | 'runtime'
   defaultModel: string
+  /** "api_key" (x-api-key header), "bearer" (Authorization: Bearer), or "both". */
+  authMode: 'api_key' | 'bearer' | 'both'
+  authModeSource?: 'env' | 'runtime'
+  /** Names only -- the server never returns header values. */
+  extraHeaders: string[]
+  extraHeadersSource?: 'env' | 'runtime'
 }

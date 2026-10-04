@@ -43,6 +43,11 @@ def _status() -> dict:
         "model": config.AI_MODEL,
         "modelSource": "runtime" if config.AI_MODEL_SET_AT_RUNTIME else "env",
         "defaultModel": config.DEFAULT_AI_MODEL,
+        "authMode": config.AUTH_MODE,
+        "authModeSource": "runtime" if config.AUTH_MODE_SET_AT_RUNTIME else "env",
+        # Header NAMES only -- values can be secrets (tenant ids, proxy tokens).
+        "extraHeaders": sorted(config.EXTRA_HEADERS),
+        "extraHeadersSource": "runtime" if config.EXTRA_HEADERS_SET_AT_RUNTIME else "env",
     }
 
 
@@ -71,6 +76,25 @@ def set_anthropic_key(body: SetApiKeyRequest):
         else:
             config.AI_MODEL = config.DEFAULT_AI_MODEL
             config.AI_MODEL_SET_AT_RUNTIME = False
+
+    if body.auth_mode is not None:
+        try:
+            mode = config.normalize_auth_mode(body.auth_mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        config.AUTH_MODE = mode
+        config.AUTH_MODE_SET_AT_RUNTIME = bool(body.auth_mode.strip()) and mode != config.DEFAULT_AUTH_MODE
+
+    if body.extra_headers is not None:
+        if body.extra_headers.strip():
+            try:
+                config.EXTRA_HEADERS = config.parse_extra_headers(body.extra_headers)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            config.EXTRA_HEADERS_SET_AT_RUNTIME = True
+        else:
+            config.EXTRA_HEADERS = dict(config.DEFAULT_EXTRA_HEADERS)
+            config.EXTRA_HEADERS_SET_AT_RUNTIME = False
 
     return _status()
 

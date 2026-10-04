@@ -132,10 +132,18 @@ export default function App() {
 
   async function restoreCachedAiSettings() {
     const cached = loadCachedAiSettings()
-    const overrides: { api_key?: string; base_url?: string; model?: string } = {}
+    const overrides: {
+      api_key?: string
+      base_url?: string
+      model?: string
+      auth_mode?: string
+      extra_headers?: string
+    } = {}
     if (cached.apiKey) overrides.api_key = cached.apiKey
     if (cached.baseUrl) overrides.base_url = cached.baseUrl
     if (cached.model) overrides.model = cached.model
+    if (cached.authMode) overrides.auth_mode = cached.authMode
+    if (cached.extraHeaders) overrides.extra_headers = cached.extraHeaders
     if (Object.keys(overrides).length === 0) return
     try {
       await api.restoreAiSettings(overrides)

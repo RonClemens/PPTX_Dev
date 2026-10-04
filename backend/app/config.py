@@ -1,4 +1,6 @@
+import json
 import os
+import re
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -27,10 +29,88 @@ def normalize_base_url(url: str) -> str:
     return url
 
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+AUTH_MODES = ("api_key", "bearer", "both")
+_HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+
+
+def normalize_auth_mode(value: str) -> str:
+    """"api_key" (default) sends the key as the `x-api-key` header, exactly as
+    api.anthropic.com expects. "bearer" sends it as `Authorization: Bearer
+    <token>` instead -- what most corporate/Bedrock/LiteLLM-style gateways
+    want for a "work token" (the same thing Claude Code calls
+    ANTHROPIC_AUTH_TOKEN). "both" sends both headers."""
+    value = (value or "").strip().lower().replace("-", "_")
+    if value in ("", "default"):
+        return "api_key"
+    if value in ("x_api_key", "apikey"):
+        return "api_key"
+    if value in ("token", "auth_token", "authorization"):
+        return "bearer"
+    if value not in AUTH_MODES:
+        raise ValueError(f"auth mode must be one of: {', '.join(AUTH_MODES)}")
+    return value
+
+
+def parse_extra_headers(text: str) -> dict[str, str]:
+    """Extra HTTP headers to send with every AI request, for gateways that
+    need more than a key (a tenant/subscription id, a proxy auth header...).
+    Accepts one "Name: value" per line, or a JSON object. Raises ValueError
+    with a human-readable message on anything malformed."""
+    text = (text or "").strip()
+    if not text:
+        return {}
+    pairs: list[tuple[str, str]] = []
+    if text.startswith("{"):
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"extra headers look like JSON but don't parse: {exc}") from exc
+        if not isinstance(obj, dict):
+            raise ValueError("extra headers JSON must be an object of name: value")
+        pairs = [(str(k), str(v)) for k, v in obj.items()]
+    else:
+        for n, line in enumerate(text.splitlines(), start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            name, sep, value = line.partition(":")
+            if not sep:
+                raise ValueError(f'extra headers line {n} must look like "Header-Name: value"')
+            pairs.append((name.strip(), value.strip()))
+    headers: dict[str, str] = {}
+    for name, value in pairs:
+        if not _HEADER_NAME_RE.match(name):
+            raise ValueError(f"invalid header name: {name!r}")
+        if "\r" in value or "\n" in value or len(value) > 4096:
+            raise ValueError(f"invalid value for header {name}")
+        headers[name] = value
+    if len(headers) > 20:
+        raise ValueError("at most 20 extra headers")
+    return headers
+
+
+# ANTHROPIC_AUTH_TOKEN is accepted as an alias (it is what Claude Code uses
+# for gateways); when only it is set, the token is sent as a Bearer token.
+_env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+_env_token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "").strip()
+ANTHROPIC_API_KEY = _env_key or _env_token
 ANTHROPIC_API_KEY_SET_AT_RUNTIME = False  # True once /api/settings/anthropic-key overrides it
 ANTHROPIC_BASE_URL = normalize_base_url(os.environ.get("ANTHROPIC_BASE_URL", ""))
 ANTHROPIC_BASE_URL_SET_AT_RUNTIME = False  # True once /api/settings/anthropic-key overrides it
+DEFAULT_AUTH_MODE = normalize_auth_mode(
+    os.environ.get("PPTX_DEV_AUTH_MODE", "") or ("bearer" if _env_token and not _env_key else "")
+)
+AUTH_MODE = DEFAULT_AUTH_MODE
+AUTH_MODE_SET_AT_RUNTIME = False
+try:
+    # A one-line env var can't hold real newlines, so a literal backslash-n
+    # between headers is accepted too.
+    DEFAULT_EXTRA_HEADERS = parse_extra_headers(os.environ.get("PPTX_DEV_EXTRA_HEADERS", "").replace("\\n", "\n"))
+except ValueError as _exc:  # a bad env value shouldn't stop the app booting
+    print(f"warning: ignoring PPTX_DEV_EXTRA_HEADERS: {_exc}")
+    DEFAULT_EXTRA_HEADERS = {}
+EXTRA_HEADERS = dict(DEFAULT_EXTRA_HEADERS)
+EXTRA_HEADERS_SET_AT_RUNTIME = False
 AI_MODEL = os.environ.get("PPTX_DEV_AI_MODEL", "claude-sonnet-5").strip()
 AI_MODEL_SET_AT_RUNTIME = False  # True once /api/settings/anthropic-key overrides it
 DEFAULT_AI_MODEL = AI_MODEL  # what "reset to default" reverts to

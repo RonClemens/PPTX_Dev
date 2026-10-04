@@ -12,6 +12,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
     monkeypatch.delenv("PPTX_DEV_AI_MODEL", raising=False)
+    for var in ("ANTHROPIC_AUTH_TOKEN", "PPTX_DEV_AUTH_MODE", "PPTX_DEV_EXTRA_HEADERS"):
+        monkeypatch.delenv(var, raising=False)
     for mod in list(sys.modules):
         if mod.startswith("app"):
             del sys.modules[mod]
@@ -32,6 +34,10 @@ def test_status_unconfigured_by_default(client):
         "model": "claude-sonnet-5",
         "modelSource": "env",
         "defaultModel": "claude-sonnet-5",
+        "authMode": "api_key",
+        "authModeSource": "env",
+        "extraHeaders": [],
+        "extraHeadersSource": "env",
     }
 
 
@@ -220,3 +226,209 @@ def test_test_connection_reports_real_api_error(client, monkeypatch):
 
     assert res.status_code == 502
     assert "Claude API error" in res.json()["detail"]
+
+
+
+# -- authentication mode / extra headers -------------------------------------------------
+
+
+def _outgoing_headers(key="sk-test-123"):
+    """The credential headers the real SDK client would send, per current settings."""
+    import app.ai.assistant as assistant_mod
+
+    client = assistant_mod._client()
+    headers = {**client.auth_headers, **client.default_headers}
+    return {k.lower(): v for k, v in headers.items()}
+
+
+def _set(client, **body):
+    return client.put("/api/settings/anthropic-key", json=body)
+
+
+def test_default_mode_sends_x_api_key_only(client):
+    _set(client, api_key="sk-test-123")
+    h = _outgoing_headers()
+    assert h["x-api-key"] == "sk-test-123" and "authorization" not in h
+
+
+def test_bearer_mode_sends_authorization_bearer_and_no_x_api_key(client):
+    res = _set(client, api_key="work-token-abc", auth_mode="bearer")
+    assert res.json()["authMode"] == "bearer" and res.json()["authModeSource"] == "runtime"
+    h = _outgoing_headers()
+    assert h["authorization"] == "Bearer work-token-abc"
+    assert "x-api-key" not in h
+
+
+def test_both_mode_sends_both_headers(client):
+    _set(client, api_key="tok", auth_mode="both")
+    h = _outgoing_headers()
+    assert h["authorization"] == "Bearer tok" and h["x-api-key"] == "tok"
+
+
+def test_auth_mode_aliases_and_reset(client):
+    assert _set(client, auth_mode="Auth-Token").json()["authMode"] == "bearer"
+    assert _set(client, auth_mode="x-api-key").json()["authMode"] == "api_key"
+    _set(client, auth_mode="bearer")
+    res = _set(client, auth_mode="")
+    assert res.json()["authMode"] == "api_key" and res.json()["authModeSource"] == "env"
+
+
+def test_invalid_auth_mode_is_400_and_changes_nothing(client):
+    _set(client, auth_mode="bearer")
+    res = _set(client, auth_mode="oauth")
+    assert res.status_code == 400 and "auth mode" in res.json()["detail"]
+    assert client.get("/api/settings/anthropic-key").json()["authMode"] == "bearer"
+
+
+def test_extra_headers_are_sent_but_values_are_never_returned(client):
+    _set(client, api_key="k")
+    res = _set(client, extra_headers="X-Tenant-Id: acme-secret-42\n# comment\nOcp-Apim-Subscription-Key: s3cr3t")
+    body = res.json()
+    assert body["extraHeaders"] == ["Ocp-Apim-Subscription-Key", "X-Tenant-Id"]
+    assert body["extraHeadersSource"] == "runtime"
+    assert "acme-secret-42" not in res.text and "s3cr3t" not in res.text
+    h = _outgoing_headers()
+    assert h["x-tenant-id"] == "acme-secret-42" and h["ocp-apim-subscription-key"] == "s3cr3t"
+
+
+def test_extra_headers_accept_json_and_can_be_cleared(client):
+    res = _set(client, extra_headers='{"X-One": "1", "X-Two": "2"}')
+    assert res.json()["extraHeaders"] == ["X-One", "X-Two"]
+    res = _set(client, extra_headers="")
+    assert res.json()["extraHeaders"] == [] and res.json()["extraHeadersSource"] == "env"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["no colon here", "Bad Name: x", "X-Ok: fine\n: nothing", '{"a": ', "[1, 2]", "X-Evil: a\rb"],
+)
+def test_malformed_extra_headers_are_400_and_change_nothing(client, bad):
+    _set(client, extra_headers="X-Keep: yes")
+    res = _set(client, extra_headers=bad)
+    assert res.status_code == 400
+    assert client.get("/api/settings/anthropic-key").json()["extraHeaders"] == ["X-Keep"]
+
+
+def test_env_auth_token_alias_defaults_to_bearer(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPTX_DEV_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "env-work-token")
+    monkeypatch.setenv("PPTX_DEV_EXTRA_HEADERS", "X-From-Env: 1")
+    for mod in list(sys.modules):
+        if mod.startswith("app"):
+            del sys.modules[mod]
+    c = TestClient(importlib.import_module("app.main").app)
+    body = c.get("/api/settings/anthropic-key").json()
+    assert body["configured"] is True and body["authMode"] == "bearer" and body["extraHeaders"] == ["X-From-Env"]
+    h = _outgoing_headers()
+    assert h["authorization"] == "Bearer env-work-token" and "x-api-key" not in h
+
+
+def test_errors_name_the_url_status_and_likely_cause():
+    import anthropic
+    import httpx
+
+    import app.ai.assistant as assistant_mod
+
+    req = httpx.Request("POST", "https://gateway.example.mil/v1/messages")
+    resp = httpx.Response(401, request=req, json={"error": {"message": "invalid bearer token"}})
+    msg = assistant_mod.describe_api_error(
+        anthropic.AuthenticationError("401", response=resp, body=None)
+    )
+    assert "POST https://gateway.example.mil/v1/messages returned HTTP 401" in msg
+    assert "invalid bearer token" in msg and "Authentication mode" in msg
+
+    resp404 = httpx.Response(404, request=req, text="model not found")
+    msg = assistant_mod.describe_api_error(anthropic.NotFoundError("404", response=resp404, body=None))
+    assert "HTTP 404" in msg and "base URL" in msg and "model" in msg
+
+    conn = anthropic.APIConnectionError(request=req)
+    assert "could not connect to https://gateway.example.mil/v1/messages" in assistant_mod.describe_api_error(conn)
+
+
+def test_bearer_mode_never_leaks_an_env_api_key_as_x_api_key(client, monkeypatch):
+    """With api_key=None the SDK silently reads ANTHROPIC_API_KEY from the
+    environment and prefers it -- which would send x-api-key instead of the
+    Bearer token the gateway needs."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-env-should-not-be-sent")
+    _set(client, api_key="work-token", auth_mode="bearer")
+    h = _outgoing_headers()
+    assert h["authorization"] == "Bearer work-token" and "x-api-key" not in h
+
+
+# -- end to end against a fake gateway -----------------------------------------------------
+
+
+@pytest.fixture()
+def fake_gateway():
+    """A tiny local HTTP server standing in for a corporate Anthropic-compatible
+    gateway: records every request and answers with a minimal Messages response."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen: list[dict] = []
+    behavior = {"status": 200}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("content-length", 0))
+            body = self.rfile.read(length)
+            seen.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": body})
+            if behavior["status"] != 200:
+                payload = json.dumps({"type": "error", "error": {"type": "authentication_error", "message": "invalid bearer token"}})
+                self.send_response(behavior["status"])
+            else:
+                payload = json.dumps({
+                    "id": "msg_test", "type": "message", "role": "assistant", "model": "gw-model",
+                    "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                })
+                self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload.encode())
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield SimpleNamespace(url=f"http://127.0.0.1:{server.server_port}", seen=seen, behavior=behavior)
+    server.shutdown()
+
+
+def test_test_connection_reaches_a_gateway_with_bearer_token_extra_header_and_path_prefix(client, fake_gateway):
+    _set(client, api_key="work-token-xyz", auth_mode="bearer", model="gw-model",
+         base_url=f"{fake_gateway.url}/anthropic/", extra_headers="X-Tenant-Id: acme")
+    res = client.post("/api/settings/anthropic-key/test")
+    assert res.status_code == 200, res.text
+    assert res.json()["ok"] is True and res.json()["model"] == "gw-model"
+
+    req = fake_gateway.seen[0]
+    assert req["path"] == "/anthropic/v1/messages"  # path prefix on the base URL is honored
+    assert req["headers"]["authorization"] == "Bearer work-token-xyz"
+    assert "x-api-key" not in req["headers"]
+    assert req["headers"]["x-tenant-id"] == "acme"
+    assert b'"model":"gw-model"' in req["body"].replace(b" ", b"")
+
+
+def test_gateway_rejection_surfaces_url_status_body_and_hint(client, fake_gateway):
+    fake_gateway.behavior["status"] = 401
+    _set(client, api_key="wrong", base_url=fake_gateway.url)
+    res = client.post("/api/settings/anthropic-key/test")
+    assert res.status_code == 502
+    detail = res.json()["detail"]
+    assert f"POST {fake_gateway.url}/v1/messages returned HTTP 401" in detail
+    assert "invalid bearer token" in detail and "Authentication mode" in detail
+
+
+def test_env_extra_headers_accept_literal_backslash_n_separators(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPTX_DEV_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PPTX_DEV_EXTRA_HEADERS", "X-One: 1\\nX-Two: 2")
+    for mod in list(sys.modules):
+        if mod.startswith("app"):
+            del sys.modules[mod]
+    c = TestClient(importlib.import_module("app.main").app)
+    assert c.get("/api/settings/anthropic-key").json()["extraHeaders"] == ["X-One", "X-Two"]

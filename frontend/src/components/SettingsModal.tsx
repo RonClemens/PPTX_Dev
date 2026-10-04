@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { cacheApiKey, cacheBaseUrl, cacheModel } from '../aiSettingsCache'
+import { cacheApiKey, cacheAuthMode, cacheBaseUrl, cacheExtraHeaders, cacheModel } from '../aiSettingsCache'
 import { api, type ApiKeyStatus, type TestConnectionResult } from '../api'
 
 type TestOutcome = TestConnectionResult | { ok: false; error: string }
@@ -26,6 +26,13 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
   const [modelBusy, setModelBusy] = useState(false)
   const [modelError, setModelError] = useState<string | null>(null)
   const [modelSavedJustNow, setModelSavedJustNow] = useState(false)
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authSavedJustNow, setAuthSavedJustNow] = useState(false)
+  const [headersInput, setHeadersInput] = useState('')
+  const [headersBusy, setHeadersBusy] = useState(false)
+  const [headersError, setHeadersError] = useState<string | null>(null)
+  const [headersSavedJustNow, setHeadersSavedJustNow] = useState(false)
   const [testBusy, setTestBusy] = useState(false)
   const [testResult, setTestResult] = useState<TestOutcome | null>(null)
 
@@ -99,6 +106,39 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
       setBaseUrlError((e as Error).message)
     } finally {
       setBaseUrlBusy(false)
+    }
+  }
+
+  async function saveAuthMode(mode: string) {
+    setAuthBusy(true)
+    setAuthError(null)
+    try {
+      const s = await api.setAuthMode(mode)
+      setStatus(s)
+      cacheAuthMode(s.authModeSource === 'runtime' ? s.authMode : '')
+      setAuthSavedJustNow(true)
+      setTimeout(() => setAuthSavedJustNow(false), 2500)
+    } catch (e) {
+      setAuthError((e as Error).message)
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function saveHeaders(text: string) {
+    setHeadersBusy(true)
+    setHeadersError(null)
+    try {
+      const s = await api.setExtraHeaders(text)
+      setStatus(s)
+      cacheExtraHeaders(text.trim() && s.extraHeadersSource === 'runtime' ? text : '')
+      setHeadersInput('')
+      setHeadersSavedJustNow(true)
+      setTimeout(() => setHeadersSavedJustNow(false), 2500)
+    } catch (e) {
+      setHeadersError((e as Error).message)
+    } finally {
+      setHeadersBusy(false)
     }
   }
 
@@ -187,8 +227,11 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
 
         <hr className="modal-divider" />
 
-        <label className="modal-label">Anthropic API key</label>
-        <p className="modal-hint">Cached in this browser (not encrypted).</p>
+        <label className="modal-label">API key / auth token</label>
+        <p className="modal-hint">
+          Your Anthropic API key, or your work gateway’s token (choose how it is sent under
+          Authentication below). Cached in this browser (not encrypted).
+        </p>
 
         {status && (
           <div className={`key-status ${status.configured ? 'key-status-ok' : 'key-status-empty'}`}>
@@ -207,7 +250,7 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
           <input
             type="password"
             className="modal-input"
-            placeholder="sk-ant-..."
+            placeholder="sk-ant-... or your gateway token"
             title="Used for &quot;Ask AI&quot;. For a real deployment, set ANTHROPIC_API_KEY via your platform's secrets manager instead."
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -233,7 +276,10 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
         <hr className="modal-divider" />
 
         <label className="modal-label">API base URL</label>
-        <p className="modal-hint">For a Bedrock/gateway proxy instead of the public API. No /v1 suffix.</p>
+        <p className="modal-hint">
+          For a gateway/proxy instead of the public API. Host (plus any path prefix your gateway uses),
+          without the trailing /v1 — it is added automatically.
+        </p>
 
         {status && (
           <div className={`key-status ${status.baseUrl ? 'key-status-ok' : 'key-status-empty'}`}>
@@ -273,6 +319,71 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
             Reset to default
           </button>
         )}
+
+        <hr className="modal-divider" />
+
+        <label className="modal-label">Authentication</label>
+        <p className="modal-hint">
+          How the key/token above is sent. The public API uses <code>x-api-key</code>; most work
+          gateways expect <code>Authorization: Bearer</code>. If you get a 401, try the other one.
+        </p>
+
+        <div className="modal-row">
+          <select
+            className="modal-input modal-select"
+            value={status?.authMode ?? 'api_key'}
+            disabled={authBusy || !status}
+            onChange={(e) => saveAuthMode(e.target.value)}
+          >
+            <option value="api_key">API key (x-api-key header) — api.anthropic.com</option>
+            <option value="bearer">Bearer token (Authorization header) — most work gateways</option>
+            <option value="both">Both headers</option>
+          </select>
+        </div>
+        {authSavedJustNow && <p className="modal-success">Saved.</p>}
+        {authError && <p className="error-text">{authError}</p>}
+
+        <hr className="modal-divider" />
+
+        <label className="modal-label">Extra headers (optional)</label>
+        <p className="modal-hint">
+          For gateways that need more than a key, e.g. a tenant or subscription id. One{' '}
+          <code>Name: value</code> per line. Values are never shown again after saving.
+        </p>
+
+        {status && (
+          <div className={`key-status ${status.extraHeaders.length ? 'key-status-ok' : 'key-status-empty'}`}>
+            {status.extraHeaders.length ? (
+              <>
+                Sending ({status.extraHeadersSource === 'runtime' ? 'set here' : 'from environment'}):{' '}
+                <code>{status.extraHeaders.join(', ')}</code>
+              </>
+            ) : (
+              'No extra headers.'
+            )}
+          </div>
+        )}
+
+        <textarea
+          className="modal-input modal-textarea"
+          rows={3}
+          placeholder={'X-Tenant-Id: my-team\nOcp-Apim-Subscription-Key: ...'}
+          value={headersInput}
+          onChange={(e) => setHeadersInput(e.target.value)}
+          disabled={headersBusy}
+        />
+        <div className="modal-row">
+          <button disabled={headersBusy || !headersInput.trim()} onClick={() => saveHeaders(headersInput)}>
+            Save headers
+          </button>
+          {status?.extraHeadersSource === 'runtime' && (
+            <button disabled={headersBusy} onClick={() => saveHeaders('')}>
+              Clear headers
+            </button>
+          )}
+        </div>
+        {headersSavedJustNow && <p className="modal-success">Saved.</p>}
+        {headersError && <p className="error-text">{headersError}</p>}
 
         <hr className="modal-divider" />
 

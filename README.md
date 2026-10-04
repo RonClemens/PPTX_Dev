@@ -213,6 +213,53 @@ cd backend
 .venv/bin/python -m pytest -q
 ```
 
+## Connecting to your own Claude API or work gateway
+
+Open **⚙ Settings** and fill in, top to bottom:
+
+1. **API key / auth token** -- your Anthropic API key, or the token your
+   organization issued for its Claude gateway.
+2. **API base URL** -- leave blank for `api.anthropic.com`. For a work gateway
+   enter its address, **without** the trailing `/v1` (the app appends
+   `/v1/messages`). A path prefix is kept: `https://gw.example.com/anthropic`
+   is called as `https://gw.example.com/anthropic/v1/messages`.
+3. **Authentication** -- how the token is sent:
+   - *API key (x-api-key)* -- what api.anthropic.com expects (default).
+   - *Bearer token (Authorization)* -- what most corporate, Bedrock-fronting
+     and LiteLLM-style gateways expect. **If Test Connection reports HTTP 401
+     with the default, switch to this.**
+   - *Both headers* -- for the occasional gateway that checks both.
+4. **Extra headers** (optional) -- for gateways that also want a tenant,
+   subscription or proxy header: one `Name: value` per line (or a JSON object).
+   Only the header *names* are ever shown back; values are write-only.
+5. **Model** -- the model id **your gateway** serves. Bedrock-style gateways
+   use ids like `anthropic.claude-sonnet-4-5-20250929-v1:0`, not the public
+   API's short names. A 404 from Test Connection usually means this (or the
+   base URL).
+6. **Test Connection** sends one tiny real request and reports success, or the
+   exact request URL, HTTP status, the gateway's own error text, and the most
+   likely cause. Fix the setting it points at and test again.
+
+Each save takes effect immediately -- no restart. Settings live in the server
+process's memory and are cached in this browser (not encrypted) and re-applied
+on every page load, so a Render restart or spin-down doesn't lose them.
+
+**Environment variables** do the same without touching the browser (preferred
+when others can reach the app, since the token then never enters a browser): on
+Render add them under *Environment*; in the container put them in `.env`.
+
+| Variable | Meaning |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | key or token (alias: `ANTHROPIC_AUTH_TOKEN`, which also defaults the mode to Bearer, as in Claude Code) |
+| `ANTHROPIC_BASE_URL` | gateway address, no trailing `/v1` |
+| `PPTX_DEV_AUTH_MODE` | `api_key` (default), `bearer`, or `both` |
+| `PPTX_DEV_EXTRA_HEADERS` | `Name: value` lines (use `\n` between them in a one-line env var) or a JSON object |
+| `PPTX_DEV_AI_MODEL` | model id |
+
+Not supported: calling AWS Bedrock's own runtime API directly (SigV4 signing);
+that needs a gateway that speaks the Anthropic Messages API, or a different
+client.
+
 ## Local container deployment (single-user desktop, CUI-capable)
 
 For running on your own machine -- including one approved for CUI -- so

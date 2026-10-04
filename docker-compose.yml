@@ -32,6 +32,11 @@ services:
       # given WITHOUT a trailing /v1.
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       PPTX_DEV_AI_MODEL: "${PPTX_DEV_AI_MODEL:-claude-sonnet-5}"
+      # api_key (x-api-key; api.anthropic.com), bearer (Authorization: Bearer;
+      # most work gateways) or both.
+      PPTX_DEV_AUTH_MODE: "${PPTX_DEV_AUTH_MODE:-api_key}"
+      # Optional extra gateway headers, e.g. "X-Tenant-Id: my-team".
+      PPTX_DEV_EXTRA_HEADERS: "${PPTX_DEV_EXTRA_HEADERS:-}"
       # The UI is served by the same process, so cross-origin access is never
       # needed here; disabling CORS means other web pages in your browser
       # can't talk to the API.

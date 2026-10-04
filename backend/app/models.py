@@ -24,6 +24,10 @@ class SetApiKeyRequest(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None
+    # "api_key" | "bearer" | "both" ("" resets to the default).
+    auth_mode: str | None = None
+    # One "Name: value" per line, or a JSON object ("" clears them).
+    extra_headers: str | None = None
 
 
 class TextRangeEditRequest(BaseModel):

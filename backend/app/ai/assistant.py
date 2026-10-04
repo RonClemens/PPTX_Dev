@@ -155,7 +155,66 @@ def _client() -> Anthropic:
         raise AdjudicationError(
             "ANTHROPIC_API_KEY is not set in the backend environment; AI adjudication is unavailable."
         )
-    return Anthropic(api_key=config.ANTHROPIC_API_KEY, base_url=config.ANTHROPIC_BASE_URL or None)
+    key = config.ANTHROPIC_API_KEY
+    headers = dict(config.EXTRA_HEADERS)
+    kwargs: dict = {"base_url": config.ANTHROPIC_BASE_URL or None}
+    if config.AUTH_MODE == "bearer":
+        # Authorization: Bearer <token> and NO x-api-key header. The SDK would
+        # otherwise fall back to the ANTHROPIC_API_KEY environment variable
+        # when api_key is None (and prefers x-api-key when both exist), so
+        # clear it explicitly after construction.
+        if headers:
+            kwargs["default_headers"] = headers
+        client = Anthropic(api_key=None, auth_token=key, **kwargs)
+        client.api_key = None
+        return client
+    if config.AUTH_MODE == "both":
+        # The SDK only ever sends one of its two credentials, so send the
+        # Bearer header ourselves alongside x-api-key.
+        headers["Authorization"] = f"Bearer {key}"
+    if headers:
+        kwargs["default_headers"] = headers
+    return Anthropic(api_key=key, **kwargs)
+
+
+def describe_api_error(exc: Exception) -> str:
+    """A diagnostic message for a failed AI call: what was requested, what
+    came back, and the usual cause -- so a misconfigured gateway can be fixed
+    from the message alone, without reading server logs."""
+    prefix = "Claude API error"
+    if isinstance(exc, anthropic.APIStatusError):
+        req = getattr(exc, "request", None)
+        where = f"{req.method} {req.url}" if req is not None else "request"
+        body = ""
+        try:
+            body = (exc.response.text or "").strip().replace("\n", " ")[:300]
+        except Exception:  # noqa: BLE001
+            pass
+        hint = {
+            401: "the gateway rejected the credential -- try the other Authentication mode "
+            "(Bearer token vs. x-api-key) or check the token",
+            403: "authenticated but not permitted -- check the token's access, the model, "
+            "and any required extra headers",
+            404: "the URL or model was not found -- check the base URL (host only, no /v1; some "
+            "gateways need a path prefix) and the model id",
+            429: "rate limited or out of quota",
+        }.get(exc.status_code, "")
+        out = f"{prefix}: {where} returned HTTP {exc.status_code}"
+        if body:
+            out += f" -- {body}"
+        if hint:
+            out += f". Likely cause: {hint}."
+        return out
+    if isinstance(exc, anthropic.APIConnectionError):
+        req = getattr(exc, "request", None)
+        where = f" to {req.url}" if req is not None else ""
+        cause = exc.__cause__
+        detail = f" ({type(cause).__name__}: {cause})" if cause else ""
+        return (
+            f"{prefix}: could not connect{where}{detail}. Check the base URL, that this server can "
+            "reach it (network/proxy/firewall), and TLS certificates for internal hosts."
+        )
+    return f"{prefix}: {exc}"
 
 
 def test_connection() -> dict:
@@ -174,7 +233,7 @@ def test_connection() -> dict:
             messages=[{"role": "user", "content": "Hi"}],
         )
     except anthropic.APIError as exc:
-        raise AdjudicationError(f"Claude API error: {exc}") from exc
+        raise AdjudicationError(describe_api_error(exc)) from exc
     latency_ms = round((time.monotonic() - started) * 1000)
     return {
         "model": config.AI_MODEL,
@@ -231,7 +290,7 @@ Call submit_adjudication with your decision."""
             messages=[{"role": "user", "content": user_prompt}],
         )
     except anthropic.APIError as exc:
-        raise AdjudicationError(f"Claude API error: {exc}") from exc
+        raise AdjudicationError(describe_api_error(exc)) from exc
 
     for block in resp.content:
         if block.type == "tool_use" and block.name == "submit_adjudication":
@@ -317,7 +376,7 @@ Reviewer comment under discussion (id={comment_id}, author={comment_author}):
             messages=messages,
         )
     except anthropic.APIError as exc:
-        raise AdjudicationError(f"Claude API error: {exc}") from exc
+        raise AdjudicationError(describe_api_error(exc)) from exc
 
     reply = "".join(block.text for block in resp.content if block.type == "text")
     if not reply:
@@ -354,7 +413,7 @@ Call submit_review_comments with any new review comments for this slide."""
             messages=[{"role": "user", "content": user_prompt}],
         )
     except anthropic.APIError as exc:
-        raise AdjudicationError(f"Claude API error: {exc}") from exc
+        raise AdjudicationError(describe_api_error(exc)) from exc
 
     for block in resp.content:
         if block.type == "tool_use" and block.name == "submit_review_comments":
