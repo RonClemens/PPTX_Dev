@@ -9,6 +9,7 @@ import {
   type AiSettings,
 } from '../aiSettings'
 import { api, type ServerDefaults, type TestConnectionResult } from '../api'
+import { MAX_SETTINGS_FILE_BYTES, parseSettingsFile } from '../settingsFile'
 
 type TestOutcome = TestConnectionResult | { ok: false; error: string }
 
@@ -27,6 +28,7 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
   const [remember, setRemember] = useState(isRemembered)
   const [savedJustNow, setSavedJustNow] = useState(false)
   const [server, setServer] = useState<ServerDefaults | null>(null)
+  const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null)
   const [testBusy, setTestBusy] = useState(false)
   const [testResult, setTestResult] = useState<TestOutcome | null>(null)
 
@@ -51,6 +53,29 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
     setForm(trimmed)
     setSavedJustNow(true)
     setTimeout(() => setSavedJustNow(false), 2500)
+  }
+
+  /** Read a settings file the user picked on THIS device. It is parsed right
+   * here in the browser and only fills the form below -- never uploaded, and
+   * not saved until the user presses "Save on this device". */
+  async function importFromFile(file: File | undefined) {
+    if (!file) return
+    setImportNote(null)
+    try {
+      if (file.size > MAX_SETTINGS_FILE_BYTES) throw new Error('That file is too large to be a settings file.')
+      const { settings, found, warnings } = parseSettingsFile(await file.text())
+      setForm((f) => ({ ...f, ...settings }))
+      setTestResult(null)
+      setImportNote({
+        ok: true,
+        text:
+          `Loaded ${found.join(', ')} from ${file.name}. Review below, then press “Save on this device”. ` +
+          'The file stayed on this device.' +
+          (warnings.length ? ' ' + warnings.join(' ') : ''),
+      })
+    } catch (e) {
+      setImportNote({ ok: false, text: (e as Error).message })
+    }
   }
 
   function forgetAll() {
@@ -124,6 +149,28 @@ export default function SettingsModal({ onClose, authorName, onAuthorNameChange 
             This server also has its own key set in its environment; it is used only for fields you leave
             blank here.
           </p>
+        )}
+
+        <div className="modal-row">
+          <label className="file-import-button">
+            Import from file…
+            <input
+              type="file"
+              hidden
+              onChange={(e) => {
+                importFromFile(e.target.files?.[0])
+                e.target.value = '' // allow re-picking the same file
+              }}
+            />
+          </label>
+        </div>
+        <p className="modal-hint">
+          Pick a small settings file from this device (a .env or .json with ANTHROPIC_API_KEY,
+          ANTHROPIC_BASE_URL, …). It is read in your browser only: never uploaded, and not saved until you
+          press Save.
+        </p>
+        {importNote && (
+          <p className={importNote.ok ? 'modal-success' : 'error-text'}>{importNote.text}</p>
         )}
 
         <label className="modal-sublabel">API key / auth token</label>

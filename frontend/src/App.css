@@ -1810,3 +1810,18 @@
   font-size: 13px;
   margin: 14px 0 10px;
 }
+
+.file-import-button {
+  display: inline-block;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.file-import-button:hover {
+  background: var(--hover-bg);
+}

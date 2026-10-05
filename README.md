@@ -240,6 +240,28 @@ Open **⚙ Settings** and fill in, top to bottom:
    exact request URL, HTTP status, the gateway's own error text, and the most
    likely cause. Fix the setting it points at and test again.
 
+### Importing settings from a file (optional)
+
+Instead of typing on a phone, you can keep a small settings file on your own
+device and pick it with **Import from file…** in Settings. Start from
+`samples/ai-settings.example.env`: copy it to your device, fill in *your*
+values, and give it an ordinary name such as `ai-settings.env` (some Android
+file pickers hide dot-files; `.json` and `.txt` work too).
+
+- It is read **in your browser only**. The file is never uploaded, and the app
+  never searches your device -- it can read only the one file you choose.
+- It only **fills in the form**. Nothing is saved until you review the values
+  and press **Save on this device**, which stores them exactly as if you had
+  typed them (see below).
+- Accepted: `.env` lines (`ANTHROPIC_API_KEY=...`, `ANTHROPIC_AUTH_TOKEN=...`
+  -- which also selects Bearer mode -- `ANTHROPIC_BASE_URL`,
+  `PPTX_DEV_AUTH_MODE`, `PPTX_DEV_EXTRA_HEADERS`, `PPTX_DEV_AI_MODEL`), or a
+  JSON object with the same names, camelCase names (`apiKey`, `baseUrl`,
+  `authMode`, `extraHeaders`, `model`), or Claude Code's `{"env": {...}}` form.
+  Unknown names are ignored.
+- The file itself is just a plaintext secret on your device: keep it somewhere
+  private and never commit it (the repo's `.gitignore` excludes `.env`).
+
 ### Where your key and URL are stored
 
 **Only in the browser on the device you typed them into.** The server never
